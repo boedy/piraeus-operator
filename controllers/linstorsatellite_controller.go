@@ -405,10 +405,24 @@ func (r *LinstorSatelliteReconciler) reconcileStoragePools(ctx context.Context, 
 		}
 
 		if existingPool == nil && pool.Source != nil && len(pool.Source.HostDevices) > 0 {
-			err := lc.Nodes.CreateDevicePool(ctx, lsatellite.Name, lclient.PhysicalStorageCreate{
+
+			storageDevicesFoundOnNode, err := lc.Nodes.GetPhysicalStorage(ctx, lsatellite.Name)
+
+			if err != nil {
+				r.log.Error(err, "failed to fetch node's physical storage devices", "node", lsatellite.Name)
+				continue
+			}
+
+			hostDevices := r.filterStorageDevices(storageDevicesFoundOnNode, pool.Source.HostDevices)
+
+			if len(hostDevices) < 1 {
+				r.log.Info("No available host devices", "satellite", lsatellite.Name, "pool", pool)
+			}
+
+			err = lc.Nodes.CreateDevicePool(ctx, lsatellite.Name, lclient.PhysicalStorageCreate{
 				ProviderKind: pool.ProviderKind(),
 				PoolName:     pool.PoolName(),
-				DevicePaths:  pool.Source.HostDevices,
+				DevicePaths:  hostDevices,
 				WithStoragePool: lclient.PhysicalStorageStoragePoolCreate{
 					Name:  pool.Name,
 					Props: linstorhelper.UpdateLastApplyProperty(expectedProperties),
@@ -467,6 +481,22 @@ func (r *LinstorSatelliteReconciler) reconcileStoragePools(ctx context.Context, 
 	}
 
 	return nil
+}
+
+func (r *LinstorSatelliteReconciler) filterStorageDevices(storageDevicesFoundOnNode []lclient.PhysicalStorageNode, hostPaths []string) []string {
+	existingHostDevices := make([]string, 0)
+
+	for i := range storageDevicesFoundOnNode {
+		found := &storageDevicesFoundOnNode[i]
+		for j := range hostPaths {
+			hostPath := hostPaths[j]
+			if found.Device == hostPath {
+				existingHostDevices = append(existingHostDevices, hostPath)
+			}
+		}
+	}
+
+	return existingHostDevices
 }
 
 func (r *LinstorSatelliteReconciler) deleteSatellite(ctx context.Context, lsatellite *piraeusiov1.LinstorSatellite) error {
